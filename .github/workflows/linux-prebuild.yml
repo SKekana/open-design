@@ -69,39 +69,24 @@ jobs:
           sha256sum OpenDesign-linux-x86_64.AppImage open-design.png COMMIT.txt > SHA256SUMS
 
       - name: Verify packaged startup
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
-          smoke_dir="$RUNNER_TEMP/open-design-smoke"
-          mkdir -p "$smoke_dir"
-          cd "$smoke_dir"
-          "$GITHUB_WORKSPACE/linux-artifact/OpenDesign-linux-x86_64.AppImage" --appimage-extract > /dev/null
-          app_root="$smoke_dir/squashfs-root"
-          export OD_RESOURCE_ROOT="$app_root/resources/open-design"
-          export OD_PACKAGED_NAMESPACE=linux-prebuild-smoke
-          "$OD_RESOURCE_ROOT/bin/node" "$app_root/resources/app/node_modules/@open-design/packaged/dist/headless.mjs" > runtime.log 2>&1 &
-          runtime_pid=$!
-          trap 'kill "$runtime_pid" 2>/dev/null || true' EXIT
-          ready=0
-          for attempt in {1..120}; do
-            if ! kill -0 "$runtime_pid" 2>/dev/null; then
-              cat runtime.log
-              exit 1
+          cleanup() {
+            result=$?
+            if [ "$result" != 0 ]; then
+              pnpm exec tools-pack linux logs --namespace linux-prebuild --dir "$RUNNER_TEMP/open-design-pack" --json || true
             fi
-            url="$(rg -o 'http://127\.0\.0\.1:[0-9]+' runtime.log | tail -1 || true)"
-            if [ -n "$url" ] && curl -fsS "$url/api/health" > health.json; then
-              curl -fsS "$url" > home.html
-              rg -q '<html' home.html
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [ "$ready" != 1 ]; then
-            cat runtime.log
-            exit 1
-          fi
-          cat health.json
+            pnpm exec tools-pack linux stop --headless --namespace linux-prebuild --dir "$RUNNER_TEMP/open-design-pack" --json > /dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          pnpm exec tools-pack linux install --headless --namespace linux-prebuild --dir "$RUNNER_TEMP/open-design-pack" --json
+          pnpm exec tools-pack linux start --headless --namespace linux-prebuild --dir "$RUNNER_TEMP/open-design-pack" --json > "$RUNNER_TEMP/open-design-startup.json"
+          url="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; const {status} = JSON.parse(readFileSync(process.argv[1], "utf8")); if (status.state !== "running" || !status.url) throw new Error("Packaged runtime is not ready"); console.log(status.url);' "$RUNNER_TEMP/open-design-startup.json")"
+          curl -fsS "$url/api/health"
+          curl -fsS "$url" > "$RUNNER_TEMP/open-design-home.html"
+          grep -q '<html' "$RUNNER_TEMP/open-design-home.html"
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v7
