@@ -199,7 +199,7 @@ const nextConfig: NextConfig = {
   env: {
     // Embedded in the client at build time. Packaged servers use the already
     // compiled client and need not retain source files to load this config.
-    NEXT_PUBLIC_CMS_HOST_RELEASE: existsSync(resolve(WEB_ROOT, 'src/components/touchpoint-component.ts'))
+    NEXT_PUBLIC_CMS_HOST_RELEASE: CMS_HOST_RELEASE_INPUTS.every((file) => existsSync(resolve(WORKSPACE_ROOT, file)))
       ? cmsHostReleaseFingerprint((file) => readFileSync(resolve(WORKSPACE_ROOT, file)))
       : undefined,
   },
