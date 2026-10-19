@@ -1,0 +1,77 @@
+name: Linux prebuild
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-prebuild-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  appimage:
+    name: Build Linux x64 AppImage
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: 10.33.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2
+          pnpm install --frozen-lockfile
+
+      - name: Validate workspace
+        run: |
+          pnpm guard
+          pnpm typecheck
+
+      - name: Build portable AppImage
+        run: >-
+          pnpm tools-pack linux build
+          --to appimage --portable
+          --namespace linux-prebuild
+          --dir "$RUNNER_TEMP/open-design-pack"
+
+      - name: Prepare download
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p linux-artifact
+          mapfile -d '' images < <(find "$RUNNER_TEMP/open-design-pack" -type f -name '*.AppImage' -print0)
+          if [ "${#images[@]}" -ne 1 ]; then
+            echo "Expected one AppImage, found ${#images[@]}" >&2
+            exit 1
+          fi
+          cp "${images[0]}" linux-artifact/OpenDesign-linux-x86_64.AppImage
+          cp tools/pack/resources/linux/icon.png linux-artifact/open-design.png
+          git rev-parse HEAD > linux-artifact/COMMIT.txt
+          cd linux-artifact
+          sha256sum OpenDesign-linux-x86_64.AppImage open-design.png COMMIT.txt > SHA256SUMS
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-design-linux-x86_64
+          path: linux-artifact/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
